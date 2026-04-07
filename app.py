@@ -112,5 +112,4 @@ if username:
             result_df = pd.DataFrame(best_lineup)
             st.dataframe(result_df, use_container_width=True)
 
-            st.metric("Total Projection", round(best_score, 2)) "Use `manual_projection` when you want to override Sorare's projected score with your own model."
-    )
+            st.metric("Total Projection", round(best_score, 2))
