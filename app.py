@@ -5,20 +5,55 @@ st.set_page_config(page_title="Sorare NBA Optimizer", layout="wide")
 
 st.title("🏀 Sorare NBA Lineup Optimizer")
 
-# --- AUTH ---
+# --- LOGIN ---
 st.sidebar.header("🔐 Login")
 
-jwt_token = st.sidebar.text_input("Paste your Sorare JWT Token", type="password")
+email = st.sidebar.text_input("Email")
+password = st.sidebar.text_input("Password", type="password")
 
-if not jwt_token:
-    st.warning("Enter your JWT token to continue")
+if not email or not password:
+    st.warning("Enter your email & password")
     st.stop()
 
-# --- GRAPHQL QUERY ---
+# --- AUTH REQUEST ---
 url = "https://api.sorare.com/graphql"
 
+auth_query = {
+    "query": """
+    mutation signIn($input: signInInput!) {
+      signIn(input: $input) {
+        currentUser { slug }
+        jwtToken(aud: "sorare-nba-lineup-app") {
+          token
+        }
+      }
+    }
+    """,
+    "variables": {
+        "input": {
+            "email": email,
+            "password": password
+        }
+    }
+}
+
+auth_res = requests.post(url, json=auth_query)
+
+if auth_res.status_code != 200:
+    st.error("Login failed")
+    st.stop()
+
+auth_data = auth_res.json()
+
+try:
+    token = auth_data["data"]["signIn"]["jwtToken"]["token"]
+except:
+    st.error("Invalid login or 2FA enabled")
+    st.stop()
+
+# --- FETCH CARDS ---
 headers = {
-    "Authorization": f"Bearer {jwt_token}",
+    "Authorization": f"Bearer {token}",
     "Content-Type": "application/json"
 }
 
@@ -27,14 +62,9 @@ query MyCards {
   currentUser {
     basketballCards(first: 50) {
       nodes {
-        slug
-        player {
-          displayName
-        }
+        player { displayName }
         averageScore(type: LAST_FIVE_SO5_AVERAGE_SCORE)
-        latestFixtureStats {
-          score
-        }
+        latestFixtureStats { score }
         xp
       }
     }
@@ -42,57 +72,46 @@ query MyCards {
 }
 """
 
-# --- FETCH DATA ---
-with st.spinner("Loading your cards..."):
-    response = requests.post(url, json={"query": query}, headers=headers)
+res = requests.post(url, json={"query": query}, headers=headers)
 
-if response.status_code != 200:
-    st.error("❌ Failed to connect to Sorare API")
+if res.status_code != 200:
+    st.error("Failed to fetch cards")
     st.stop()
 
-data = response.json()
+data = res.json()
 
 try:
     cards = data["data"]["currentUser"]["basketballCards"]["nodes"]
 except:
-    st.error("❌ Invalid token or no data found")
+    st.error("No data found")
     st.stop()
 
 # --- PROCESS ---
 players = []
 
-for card in cards:
-    name = card["player"]["displayName"]
-    l5 = card.get("averageScore") or 0
-    last = card.get("latestFixtureStats")
+for c in cards:
+    name = c["player"]["displayName"]
+    l5 = c.get("averageScore") or 0
+    last = c.get("latestFixtureStats")
     last_score = last["score"] if last else 0
-    xp = card.get("xp") or 0
+    xp = c.get("xp") or 0
 
     score = l5 * 0.6 + last_score * 0.3 + xp * 0.1
 
     players.append({
         "name": name,
-        "L5": l5,
-        "Last": last_score,
-        "XP": xp,
-        "Score": score
+        "score": score,
+        "l5": l5,
+        "last": last_score
     })
 
-# --- SORT ---
-players = sorted(players, key=lambda x: x["Score"], reverse=True)
+players = sorted(players, key=lambda x: x["score"], reverse=True)
 
-# --- DISPLAY ---
-st.subheader("🔥 Best Lineup Picks")
+# --- UI ---
+st.subheader("🔥 Best Lineup")
 
-top5 = players[:5]
+for i, p in enumerate(players[:5], 1):
+    st.write(f"{i}. {p['name']} — {round(p['score'],1)}")
 
-for i, p in enumerate(top5, 1):
-    st.write(f"#{i} — {p['name']}")
-    st.progress(min(p["Score"] / 100, 1.0))
-    st.write(f"L5: {p['L5']} | Last: {p['Last']} | XP: {p['XP']}")
-    st.divider()
-
-# --- FULL LIST ---
-st.subheader("📊 All Players Ranked")
-
+st.subheader("📊 All Players")
 st.dataframe(players)
